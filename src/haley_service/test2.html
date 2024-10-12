@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RGB and HSV Image Viewer</title>
+    <style>
+        canvas {
+            border: 1px solid black;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="rgbCanvas" width="640" height="480"></canvas>
+    <canvas id="hsvCanvas" width="640" height="480"></canvas>
+
+    <script>
+        const rgbCanvas = document.getElementById('rgbCanvas');
+        const hsvCanvas = document.getElementById('hsvCanvas');
+        const rgbCtx = rgbCanvas.getContext('2d');
+        const hsvCtx = hsvCanvas.getContext('2d');
+        const ws = new WebSocket('ws://127.0.0.1:9030');
+
+        ws.binaryType = 'arraybuffer';
+
+        ws.onopen = function(event) {
+            console.log('WebSocket connection opened:', event);
+        };
+
+        ws.onmessage = function(event) {
+            if (event.data instanceof ArrayBuffer) {
+                // 创建一个 Blob 对象以便进行图像数据处理
+                const blob = new Blob([event.data], { type: 'image/jpeg' });
+                const tempImage = new Image();
+
+                tempImage.onload = function() {
+                    if (isNewImageDataRGB(tempImage)) {
+                        // 显示 RGB 图像
+                        rgbCtx.drawImage(tempImage, 0, 0, rgbCanvas.width, rgbCanvas.height);
+                    } else {
+                        // 显示 HSV 图像
+                        hsvCtx.drawImage(tempImage, 0, 0, hsvCanvas.width, hsvCanvas.height);
+                    }
+                };
+
+                tempImage.src = URL.createObjectURL(blob);
+            } else {
+                console.error('Received unexpected data type:', typeof event.data);
+            }
+        };
+
+        function isNewImageDataRGB(img) {
+            // 在实际应用中，这里应该根据传输的图像数据类型来进行判断
+            // 例如，可以使用后端发送的数据格式对图像类型进行判断
+            // 在这里，我使用简单的宽高判断作为示例
+            if (img.width === rgbCanvas.width && img.height === rgbCanvas.height) {
+                return true;  // 代表是 RGB 图像
+            } else {
+                return false; // 代表是 HSV 图像
+            }
+        }
+
+        ws.onclose = function(event) {
+            console.log('WebSocket connection closed:', event);
+        };
+    </script>
+</body>
+</html>

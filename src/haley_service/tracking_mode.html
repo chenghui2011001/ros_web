@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>循迹模式</title>
+    <style>
+        canvas {
+            border: 1px solid black;
+        }
+        #logOutput {
+            white-space: pre-wrap;
+            margin-top: 20px;
+            background-color: #f0f0f0;
+            padding: 10px;
+            border: 1px solid #ccc;
+        }
+        button {
+            margin: 5px;
+            padding: 10px 20px;
+        }
+        .gauge-container {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 20px;
+        }
+        .pid-container {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>循迹模式</h1>
+    <button onclick="window.location.href='main.html'">返回主界面</button>
+    
+    <h2>图像显示</h2>
+    <canvas id="rgbCanvas" width="640" height="480"></canvas>
+    <canvas id="resultCanvas" width="640" height="480"></canvas>
+    <canvas id="errorCanvas" width="640" height="480"></canvas> <!-- 误差图像 -->
+
+
+    <h2>HSV 色域调整</h2>
+    <label for="iLowHInput">iLowH (0-179):</label>
+    <input type="range" id="iLowHInput" min="0" max="179" value="10">
+    <span id="iLowHValue">10</span>
+    
+    <label for="iHighHInput">iHighH (0-179):</label>
+    <input type="range" id="iHighHInput" min="0" max="179" value="40">
+    <span id="iHighHValue">40</span>
+
+    <label for="iLowSInput">iLowS (0-255):</label>
+    <input type="range" id="iLowSInput" min="0" max="255" value="90">
+    <span id="iLowSValue">90</span>
+
+    <label for="iHighSInput">iHighS (0-255):</label>
+    <input type="range" id="iHighSInput" min="0" max="255" value="255">
+    <span id="iHighSValue">255</span>
+
+    <label for="iLowVInput">iLowV (0-255):</label>
+    <input type="range" id="iLowVInput" min="0" max="255" value="1">
+    <span id="iLowVValue">1</span>
+
+    <label for="iHighVInput">iHighV (0-255):</label>
+    <input type="range" id="iHighVInput" min="0" max="255" value="255">
+    <span id="iHighVValue">255</span>
+
+    <div id="logOutput">Sent HSV Data: </div>
+
+    <h2>性能表</h2>
+    <div class="gauge-container">
+        <canvas id="linearGauge" width="200" height="200"></canvas>
+        <canvas id="angularGauge" width="200" height="200"></canvas>
+    </div>
+
+    <h2>控制</h2>
+    <button onclick="startTracking()">启动循迹</button>
+    <button onclick="stopTracking()">停止循迹</button>
+
+    <h2>PID 参数调节</h2>
+    <div class="pid-container">
+        <label for="pidP">P:</label>
+        <input type="number" id="pidP" value="1" step="0.1">
+        <label for="pidI">I:</label>
+        <input type="number" id="pidI" value="0" step="0.01">
+        <label for="pidD">D:</label>
+        <input type="number" id="pidD" value="0" step="0.01">
+        <button onclick="sendPID()">发送 PID 参数</button>
+    </div>
+
+    <script>
+        const rgbCanvas = document.getElementById('rgbCanvas');
+        const resultCanvas = document.getElementById('resultCanvas');
+        const errorCanvas = document.getElementById('errorCanvas');
+        const linearGauge = document.getElementById('linearGauge');
+        const angularGauge = document.getElementById('angularGauge');
+
+        const rgbCtx = rgbCanvas.getContext('2d');
+        const resultCtx = resultCanvas.getContext('2d');
+        const errorCtx = errorCanvas.getContext('2d');
+        const linearGaugeCtx = linearGauge.getContext('2d');
+        const angularGaugeCtx = angularGauge.getContext('2d');
+
+        let ws;
+        let linear_x = 0;
+        let angular_z = 0;
+        let isConnected = false;
+        let pidErrorArray = []; 
+        let startTimestamp = null; // 记录接受数据的开始时间
+
+        function connectWebSocket() {
+            ws = new WebSocket('ws://127.0.0.1:9030');
+
+            ws.onopen = function() {
+                console.log('WebSocket connection opened');
+                isConnected = true;
+                startAutoSend();
+            };
+
+            ws.onmessage = function(event) {
+                handleIncomingMessage(event.data);
+            };
+
+            ws.onclose = function(event) {
+                console.log('WebSocket connection closed:', event);
+                isConnected = false;
+                setTimeout(connectWebSocket, 1000); // 1秒后尝试重新连接
+            };
+        }
+
+        connectWebSocket();
+
+        function startTracking() {
+            if (isConnected) {
+                const command = { action: "start_tracking" };
+                ws.send(JSON.stringify(command));
+                console.log("Sent start tracking command.");
+            }
+        }
+
+        function stopTracking() {
+            if (isConnected) {
+                const command = { action: "stop_tracking" };
+                ws.send(JSON.stringify(command));
+                console.log("Sent stop tracking command.");
+            }
+        }
+
+        function sendPID() {
+            const pidData = {
+                P: parseFloat(document.getElementById('pidP').value),
+                I: parseFloat(document.getElementById('pidI').value),
+                D: parseFloat(document.getElementById('pidD').value),
+            };
+
+            const dataString = JSON.stringify(pidData);
+            document.getElementById('logOutput').innerText = `Sent PID Data: ${dataString}`;
+            if (isConnected) {
+                ws.send(dataString);
+            }
+        }
+
+
+
+
+        function drawErrorWaveform(data, timestamps) {
+            errorCtx.clearRect(0, 0, errorCanvas.width, errorCanvas.height); // 清空画布
+
+            const yMin = -10; // Y轴最小值
+            const yMax = 10;  // Y轴最大值
+            const yRange = yMax - yMin;
+
+            // 绘制坐标轴
+            drawAxes();
+
+
+            // 绘制 Y 轴刻度
+            const yStep = 1; // 每个刻度为1
+            for (let i = yMin; i <= yMax; i += yStep) {
+                const y = errorCanvas.height / 2 - (i / yRange) * (errorCanvas.height / 2); // 根据比例定位Y轴
+                errorCtx.fillText(i.toFixed(1), 5, y);
+                errorCtx.beginPath();
+                errorCtx.moveTo(0, y);
+                errorCtx.lineTo(errorCanvas.width, y); // 绘制水平线
+                errorCtx.strokeStyle = '#ddd';
+                errorCtx.stroke();
+            }
+
+            // 绘制误差波形
+            if (data.length === 0) return;
+
+            if (!startTimestamp) {
+                startTimestamp = timestamps[0]; // 第一个时间戳作为开始时间
+            }
+
+            errorCtx.beginPath();
+            const xScale = errorCanvas.width / (data.length > 1 ? data.length - 1 : 1); // X轴比例
+            errorCtx.moveTo(0, errorCanvas.height / 2 - (data[0] / yRange) * (errorCanvas.height / 2)); // 从中心位置开始
+
+            timestamps.forEach((_, index) => {
+                const y = errorCanvas.height / 2 - (data[index] / yRange) * (errorCanvas.height / 2); // 自适应Y值
+                errorCtx.lineTo(index * xScale, y);
+            });
+
+            errorCtx.strokeStyle = 'blue'; // 线条颜色
+            errorCtx.lineWidth = 2; // 线条宽度
+            errorCtx.stroke(); // 绘制
+            errorCtx.closePath();
+
+            // 绘制计时器
+            const lastTimestamp = timestamps.length > 0 ? timestamps[timestamps.length - 1] : 0;
+            const elapsedTime = (lastTimestamp - startTimestamp) / 1000; // 计算运行时间（单位：秒）
+            errorCtx.fillText(`运行时间: ${elapsedTime.toFixed(1)} s`, errorCanvas.width - 100, 20); // 显示计时器
+        }
+
+        // 绘制坐标轴和箭头
+        function drawAxes() {
+            // X轴
+            errorCtx.beginPath();
+            errorCtx.moveTo(0, errorCanvas.height / 2);
+            errorCtx.lineTo(errorCanvas.width, errorCanvas.height / 2);
+            errorCtx.strokeStyle = 'black';
+            errorCtx.lineWidth = 2;
+            errorCtx.stroke();
+
+            // Y轴
+            errorCtx.beginPath();
+            errorCtx.moveTo(errorCanvas.width / 2, 0);
+            errorCtx.lineTo(errorCanvas.width / 2, errorCanvas.height);
+            errorCtx.strokeStyle = 'black';
+            errorCtx.lineWidth = 2;
+            errorCtx.stroke();
+
+            // 绘制箭头
+            drawArrow(errorCanvas.width, errorCanvas.height / 2, false); // X轴箭头
+            drawArrow(errorCanvas.width / 2, 0, true); // Y轴箭头
+
+            // 添加坐标轴标签
+            errorCtx.fillText("时间/s", errorCanvas.width - 40, errorCanvas.height / 2 - 10); // X轴标签
+            errorCtx.save();
+            errorCtx.translate(10, errorCanvas.height / 2 + 10); // Y轴标签位置
+            errorCtx.rotate(-Math.PI / 2); // 旋转标签
+            errorCtx.fillText("误差", 0, 0); // Y轴标签
+            errorCtx.restore();
+        }
+
+        // 绘制箭头函数
+        function drawArrow(x, y, isYAxis = false) {
+            const headlen = 10; // 箭头长度
+            if (isYAxis) {
+                errorCtx.beginPath();
+                errorCtx.moveTo(x, y); // 箭头底端
+                errorCtx.lineTo(x - headlen, y + headlen); // 左边箭头
+                errorCtx.moveTo(x, y); // 箭头底端
+                errorCtx.lineTo(x + headlen, y + headlen); // 右边箭头
+                errorCtx.strokeStyle = 'black';
+                errorCtx.stroke();
+            } else {
+                errorCtx.beginPath();
+                errorCtx.moveTo(x, y); // 箭头底端
+                errorCtx.lineTo(x - headlen, y - headlen); // 上边箭头
+                errorCtx.moveTo(x, y); // 箭头底端
+                errorCtx.lineTo(x - headlen, y + headlen); // 下边箭头
+                errorCtx.strokeStyle = 'black';
+                errorCtx.stroke();
+            }
+        }
+
+
+
+
+
+
+        function handleIncomingMessage(data) {
+            try {
+                const messageData = JSON.parse(data);
+                
+                if (messageData.label === 'cmd_vel') {
+                    linear_x = messageData.linear_x;
+                    angular_z = messageData.angular_z;
+                    updateGauges();
+                }
+                
+                if (messageData.label && messageData.image) {
+                    displayImage(messageData.image, messageData.label);
+                }
+                
+                // 处理 PID 误差数据
+                if (messageData.label === 'PID_Error') {
+                    const pidError = messageData.error;
+
+                    // 添加新误差值和当前时间戳到数组
+                    const currentTime = Date.now();
+                    pidErrorArray.push({ error: pidError, timestamp: currentTime });
+
+                    // 清理数组，只保留最近 10 秒的数据
+                    const tenSecondsAgo = currentTime - 10000; // 10秒钟前的时间戳
+                    pidErrorArray = pidErrorArray.filter(item => item.timestamp >= tenSecondsAgo);
+                    console.log('Current PID Error Array:', pidErrorArray);
+
+                    // 从数组中提取仅误差值和时间戳用于绘图
+                    const errorsToPlot = pidErrorArray.map(item => item.error);
+                    const timestampsToPlot = pidErrorArray.map(item => item.timestamp);
+                    drawErrorWaveform(errorsToPlot, timestampsToPlot); // 绘制波形图
+                }
+            } catch (error) {
+                console.error('Error handling message:', error);
+            }
+        }
+
+        function displayImage(imageData, imageType) {
+            const byteCharacters = atob(imageData);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: 'image/jpeg' });
+            const tempImage = new Image();
+
+            tempImage.onload = function() {
+                switch (imageType) {
+                    case 'RGB':
+                        rgbCtx.drawImage(tempImage, 0, 0, rgbCanvas.width, rgbCanvas.height);
+                        break;
+                    case 'Result':
+                        resultCtx.drawImage(tempImage, 0, 0, resultCanvas.width, resultCanvas.height);
+                        break;
+                }
+            };
+
+            tempImage.src = URL.createObjectURL(blob);
+        }
+
+        function drawGauge(ctx, value, minValue, maxValue, label) {
+            const radius = 80;
+            ctx.clearRect(0, 0, 200, 200);
+            ctx.save();
+            ctx.translate(100, 100);
+
+            ctx.beginPath();
+            ctx.arc(0, 0, radius, 0, Math.PI, true);
+            ctx.fillStyle = "#f0f0f0";
+            ctx.fill();
+            ctx.stroke();
+
+            const angle = (value - minValue) / (maxValue - minValue) * Math.PI;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(radius * Math.cos(angle - Math.PI), radius * Math.sin(angle - Math.PI));
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+
+            ctx.textAlign = "center";
+            ctx.font = "12px Arial";
+            ctx.fillStyle = 'black';
+            ctx.fillText(`${label}: ${value.toFixed(2)}`, 0, radius - 20);
+            ctx.restore();
+        }
+
+        function updateGauges() {
+            drawGauge(linearGaugeCtx, linear_x, -1, 1.0, '线速度 (m/s)');
+            drawGauge(angularGaugeCtx, angular_z * 180 / Math.PI, -180, 180, '角速度 (°/s)');
+        }
+
+        function startAutoSend() {
+            sendHSVData(); // 立即发送一次
+            setInterval(sendHSVData, 500); // 每500ms发送一次
+        }
+
+        function sendHSVData() {
+            const hsvData = {
+                iLowH: parseInt(iLowHInput.value, 10),
+                iHighH: parseInt(iHighHInput.value, 10),
+                iLowS: parseInt(iLowSInput.value, 10),
+                iHighS: parseInt(iHighSInput.value, 10),
+                iLowV: parseInt(iLowVInput.value, 10),
+                iHighV: parseInt(iHighVInput.value, 10)
+            };
+
+            const dataString = JSON.stringify(hsvData);
+            document.getElementById('logOutput').innerText = `Sent HSV Data: ${dataString}`;
+            if (isConnected) {
+                ws.send(dataString);
+            }
+        }
+
+        const updateDisplayValues = () => {
+            document.getElementById('iLowHValue').textContent = iLowHInput.value;
+            document.getElementById('iHighHValue').textContent = iHighHInput.value;
+            document.getElementById('iLowSValue').textContent = iLowSInput.value;
+            document.getElementById('iHighSValue').textContent = iHighSInput.value;
+            document.getElementById('iLowVValue').textContent = iLowVInput.value;
+            document.getElementById('iHighVValue').textContent = iHighVInput.value;
+        };
+
+        // 为 HSV 输入框添加事件监听
+        document.getElementById('iLowHInput').addEventListener('input', updateDisplayValues);
+        document.getElementById('iHighHInput').addEventListener('input', updateDisplayValues);
+        document.getElementById('iLowSInput').addEventListener('input', updateDisplayValues);
+        document.getElementById('iHighSInput').addEventListener('input', updateDisplayValues);
+        document.getElementById('iLowVInput').addEventListener('input', updateDisplayValues);
+        document.getElementById('iHighVInput').addEventListener('input', updateDisplayValues);
+    </script>
+</body>
+</html>

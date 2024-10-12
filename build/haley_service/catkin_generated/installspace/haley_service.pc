@@ -1,0 +1,8 @@
+prefix=/home/info/ros_web/install
+
+Name: haley_service
+Description: Description of haley_service
+Version: 0.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 

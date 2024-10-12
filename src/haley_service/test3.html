@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RGB and HSV Image Viewer</title>
+    <style>
+        canvas {
+            border: 1px solid black;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="rgbCanvas" width="640" height="480"></canvas>
+    <canvas id="hsvCanvas" width="640" height="480"></canvas>
+
+    <script>
+        const rgbCanvas = document.getElementById('rgbCanvas');
+        const hsvCanvas = document.getElementById('hsvCanvas');
+        const rgbCtx = rgbCanvas.getContext('2d');
+        const hsvCtx = hsvCanvas.getContext('2d');
+        const ws = new WebSocket('ws://127.0.0.1:9030');
+
+        ws.binaryType = 'arraybuffer';
+
+        ws.onopen = function(event) {
+            console.log('WebSocket connection opened:', event);
+        };
+
+        ws.onmessage = function(event) {
+            // 解析JSON数据
+            const imageData = JSON.parse(event.data);
+
+            // 获取类型和图像数据
+            const imageType = imageData.label;
+            const imageBytes = imageData.image;
+
+            if (imageType === 'RGB') {
+                // 将RGB图像显示在RGB画布上
+                displayImage(imageBytes, rgbCtx, rgbCanvas);
+            } else if (imageType === 'HSV') {
+                // 将HSV图像显示在HSV画布上
+                displayImage(imageBytes, hsvCtx, hsvCanvas);
+            } else {
+                console.error('Received unexpected image type:', imageType);
+            }
+        };
+
+        function displayImage(imageData, ctx, canvas) {
+            const byteCharacters = atob(imageData);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: 'image/jpeg' });
+            const tempImage = new Image();
+
+            tempImage.onload = function() {
+                ctx.drawImage(tempImage, 0, 0, canvas.width, canvas.height);
+            };
+
+            tempImage.src = URL.createObjectURL(blob);
+        }
+
+        ws.onclose = function(event) {
+            console.log('WebSocket connection closed:', event);
+        };
+    </script>
+</body>
+</html>

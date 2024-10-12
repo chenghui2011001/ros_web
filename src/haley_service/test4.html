@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RGB and HSV Image Viewer</title>
+    <style>
+        canvas {
+            border: 1px solid black;
+        }
+        #logOutput {
+            white-space: pre-wrap; 
+            margin-top: 20px; 
+            background-color: #f0f0f0; 
+            padding: 10px; 
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="rgbCanvas" width="640" height="480"></canvas>
+    <canvas id="hsvCanvas" width="640" height="480"></canvas>
+    <canvas id="resultCanvas" width="640" height="480"></canvas>
+    
+    <label for="iLowHInput">iLowH (0-179):</label>
+    <input type="range" id="iLowHInput" min="0" max="179" value="10">
+    <span id="iLowHValue">10</span>
+    
+    <label for="iHighHInput">iHighH (0-179):</label>
+    <input type="range" id="iHighHInput" min="0" max="179" value="40">
+    <span id="iHighHValue">40</span>
+    
+    <label for="iLowSInput">iLowS (0-255):</label>
+    <input type="range" id="iLowSInput" min="0" max="255" value="90">
+    <span id="iLowSValue">90</span>
+    
+    <label for="iHighSInput">iHighS (0-255):</label>
+    <input type="range" id="iHighSInput" min="0" max="255" value="255">
+    <span id="iHighSValue">255</span>
+    
+    <label for="iLowVInput">iLowV (0-255):</label>
+    <input type="range" id="iLowVInput" min="0" max="255" value="1">
+    <span id="iLowVValue">1</span>
+    
+    <label for="iHighVInput">iHighV (0-255):</label>
+    <input type="range" id="iHighVInput" min="0" max="255" value="255">
+    <span id="iHighVValue">255</span>
+
+    <div id="logOutput">Sent HSV Data: </div> <!-- 日志输出区域 -->
+
+    <script>
+        const rgbCanvas = document.getElementById('rgbCanvas');
+        const hsvCanvas = document.getElementById('hsvCanvas');
+        const resultCanvas = document.getElementById('resultCanvas');
+        const rgbCtx = rgbCanvas.getContext('2d');
+        const hsvCtx = hsvCanvas.getContext('2d');
+        const resultCtx = resultCanvas.getContext('2d');
+        const ws = new WebSocket('ws://127.0.0.1:9030');
+        
+        const iLowHInput = document.getElementById('iLowHInput');
+        const iHighHInput = document.getElementById('iHighHInput');
+        const iLowSInput = document.getElementById('iLowSInput');
+        const iHighSInput = document.getElementById('iHighSInput');
+        const iLowVInput = document.getElementById('iLowVInput');
+        const iHighVInput = document.getElementById('iHighVInput');
+
+        const iLowHValue = document.getElementById('iLowHValue');
+        const iHighHValue = document.getElementById('iHighHValue');
+        const iLowSValue = document.getElementById('iLowSValue');
+        const iHighSValue = document.getElementById('iHighSValue');
+        const iLowVValue = document.getElementById('iLowVValue');
+        const iHighVValue = document.getElementById('iHighVValue');
+
+        ws.binaryType = 'arraybuffer';
+
+        ws.onopen = function(event) {
+            console.log('WebSocket connection opened:', event);
+            startAutoSend();
+        };
+
+        ws.onmessage = function(event) {
+            try {
+                const imageData = JSON.parse(event.data);
+                if (!imageData || !imageData.label || !imageData.image) {
+                    throw new Error('Invalid image data received');
+                }
+
+                const imageType = imageData.label;
+                const imageBytes = imageData.image;
+
+                switch (imageType) {
+                    case 'RGB':
+                        displayImage(imageBytes, rgbCtx, rgbCanvas);
+                        break;
+                    case 'HSV':
+                        displayImage(imageBytes, hsvCtx, hsvCanvas);
+                        break;
+                    case 'Result':
+                        displayImage(imageBytes, resultCtx, resultCanvas);
+                        break;
+                    default:
+                        console.error('Received unexpected image type:', imageType);
+                }
+            } catch (error) {
+                console.error('Error handling WebSocket message:', error);
+            }
+        };
+
+
+        function displayImage(imageData, ctx, canvas) {
+            if (!imageData) {
+                console.error('Image data is null or undefined');
+                return;
+            }
+
+            const byteCharacters = atob(imageData);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: 'image/jpeg' });
+            const tempImage = new Image();
+
+            tempImage.onload = function() {
+                ctx.drawImage(tempImage, 0, 0, canvas.width, canvas.height);
+            };
+
+            tempImage.src = URL.createObjectURL(blob);
+        }
+
+
+        // 实时更新滑块旁的值
+        const updateDisplayValues = () => {
+            iLowHValue.textContent = iLowHInput.value;
+            iHighHValue.textContent = iHighHInput.value;
+            iLowSValue.textContent = iLowSInput.value;
+            iHighSValue.textContent = iHighSInput.value;
+            iLowVValue.textContent = iLowVInput.value;
+            iHighVValue.textContent = iHighVInput.value;
+        };
+
+        iLowHInput.addEventListener('input', updateDisplayValues);
+        iHighHInput.addEventListener('input', updateDisplayValues);
+        iLowSInput.addEventListener('input', updateDisplayValues);
+        iHighSInput.addEventListener('input', updateDisplayValues);
+        iLowVInput.addEventListener('input', updateDisplayValues);
+        iHighVInput.addEventListener('input', updateDisplayValues);
+
+        function sendHSVData() {
+            const hsvData = {
+                iLowH: parseInt(iLowHInput.value, 10),
+                iHighH: parseInt(iHighHInput.value, 10),
+                iLowS: parseInt(iLowSInput.value, 10),
+                iHighS: parseInt(iHighSInput.value, 10),
+                iLowV: parseInt(iLowVInput.value, 10),
+                iHighV: parseInt(iHighVInput.value, 10)
+            };
+            
+            const dataString = JSON.stringify(hsvData);
+            document.getElementById('logOutput').innerText = `Sent HSV Data: ${dataString}`;
+            ws.send(dataString);
+        }
+
+        function startAutoSend() {
+            sendHSVData(); // 立即发送一次
+            setInterval(sendHSVData, 500); // 每500ms发送一次
+        }
+
+        ws.onclose = function(event) {
+            console.log('WebSocket connection closed:', event);
+        };
+    </script>
+</body>
+</html>

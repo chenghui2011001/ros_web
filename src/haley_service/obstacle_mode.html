@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>手动模式</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+        }
+        canvas {
+            border: 1px solid black;
+            margin: 10px 0;
+        }
+        #logOutput {
+            margin-top: 20px;
+            background-color: #f0f0f0; 
+            padding: 10px;
+            border: 1px solid #ccc;
+        }
+        .button-container {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            margin: 20px;
+        }
+        .button-row {
+            display: flex;
+            justify-content: center;
+            width: 100%;
+        }
+        button {
+            margin: 5px;
+            padding: 10px 20px;
+        }
+        .gauge-container {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>手动模式</h1>
+    <button onclick="window.history.back()">返回主界面</button>
+    <h2>图像显示</h2>
+    <canvas id="rgbCanvas" width="640" height="480"></canvas>
+    <canvas id="hsvCanvas" width="640" height="480"></canvas>
+    <canvas id="resultCanvas" width="640" height="480"></canvas>
+
+    <h2>手柄控制</h2>
+    <div class="button-container">
+        <div class="button-row">
+            <button onclick="moveForward()">前进</button>
+        </div>
+        <div class="button-row">
+            <button onclick="turnLeft()">向左</button>
+            <button onclick="stop()">停止</button>
+            <button onclick="turnRight()">向右</button>
+        </div>
+        <div class="button-row">
+            <button onclick="moveBackward()">后退</button>
+        </div>
+    </div>
+
+    <h2>HSV 色域调整</h2>
+    <div>
+        <label for="iLowHInput">iLowH (0-179):</label>
+        <input type="range" id="iLowHInput" min="0" max="179" value="10" oninput="updateDisplayValues()">
+        <span id="iLowHValue">10</span>
+    </div>
+    <div>
+        <label for="iHighHInput">iHighH (0-179):</label>
+        <input type="range" id="iHighHInput" min="0" max="179" value="40" oninput="updateDisplayValues()">
+        <span id="iHighHValue">40</span>
+    </div>
+    <div>
+        <label for="iLowSInput">iLowS (0-255):</label>
+        <input type="range" id="iLowSInput" min="0" max="255" value="90" oninput="updateDisplayValues()">
+        <span id="iLowSValue">90</span>
+    </div>
+    <div>
+        <label for="iHighSInput">iHighS (0-255):</label>
+        <input type="range" id="iHighSInput" min="0" max="255" value="255" oninput="updateDisplayValues()">
+        <span id="iHighSValue">255</span>
+    </div>
+    <div>
+        <label for="iLowVInput">iLowV (0-255):</label>
+        <input type="range" id="iLowVInput" min="0" max="255" value="1" oninput="updateDisplayValues()">
+        <span id="iLowVValue">1</span>
+    </div>
+    <div>
+        <label for="iHighVInput">iHighV (0-255):</label>
+        <input type="range" id="iHighVInput" min="0" max="255" value="255" oninput="updateDisplayValues()">
+        <span id="iHighVValue">255</span>
+    </div>
+
+    <div id="logOutput">Sent HSV Data: </div>
+    
+    <h2>性能表</h2>
+    <div class="gauge-container">
+        <canvas id="linearGauge" width="200" height="200"></canvas>
+        <canvas id="angularGauge" width="200" height="200"></canvas>
+    </div>
+
+    <script>
+        const rgbCtx = document.getElementById('rgbCanvas').getContext('2d');
+        const hsvCtx = document.getElementById('hsvCanvas').getContext('2d');
+        const resultCtx = document.getElementById('resultCanvas').getContext('2d');
+        const linearGaugeCtx = document.getElementById('linearGauge').getContext('2d');
+        const angularGaugeCtx = document.getElementById('angularGauge').getContext('2d');
+
+        let ws;
+        let linear_x = 0;
+        let angular_z = 0;
+        let isConnected = false;
+
+        function connectWebSocket() {
+            ws = new WebSocket('ws://127.0.0.1:9030');
+
+            ws.onopen = () => {
+                console.log('WebSocket connection opened');
+                isConnected = true;
+                startAutoSend();
+            };
+
+            ws.onmessage = event => handleIncomingMessage(event.data);
+            ws.onclose = () => {
+                console.log('WebSocket connection closed');
+                isConnected = false;
+                setTimeout(connectWebSocket, 1000); // Retry connection
+            };
+        }
+
+        function handleIncomingMessage(data) {
+            try {
+                const messageData = JSON.parse(data);
+                if (messageData.label === 'cmd_vel') {
+                    linear_x = messageData.linear_x;
+                    angular_z = messageData.angular_z;
+                    updateGauges();
+                } else if (messageData.label && messageData.image) {
+                    displayImage(messageData.image, messageData.label);
+                }
+            } catch (error) {
+                console.error('Error handling message:', error);
+            }
+        }
+
+        function displayImage(imageData, imageType) {
+            const byteCharacters = atob(imageData);
+            const byteNumbers = new Uint8Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const blob = new Blob([byteNumbers], { type: 'image/jpeg' });
+            const tempImage = new Image();
+
+            tempImage.onload = () => {
+                switch (imageType) {
+                    case 'RGB':
+                        rgbCtx.drawImage(tempImage, 0, 0, rgbCtx.canvas.width, rgbCtx.canvas.height);
+                        break;
+                    case 'HSV':
+                        hsvCtx.drawImage(tempImage, 0, 0, hsvCtx.canvas.width, hsvCtx.canvas.height);
+                        break;
+                    case 'Result':
+                        resultCtx.drawImage(tempImage, 0, 0, resultCtx.canvas.width, resultCtx.canvas.height);
+                        break;
+                }
+            };
+
+            tempImage.src = URL.createObjectURL(blob);
+        }
+
+        function drawGauge(ctx, value, minValue, maxValue, label) {
+            const radius = 80;
+            ctx.clearRect(0, 0, 200, 200);
+            ctx.save();
+            ctx.translate(100, 100);
+
+            // Draw background arc
+            ctx.beginPath();
+            ctx.arc(0, 0, radius, 0, Math.PI, true);
+            ctx.fillStyle = "#f0f0f0";
+            ctx.fill();
+            ctx.stroke();
+
+            // Calculate angle for current value
+            const angle = (value - minValue) / (maxValue - minValue) * Math.PI;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(radius * Math.cos(angle - Math.PI), radius * Math.sin(angle - Math.PI));
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+
+            // Draw the label and value
+            ctx.textAlign = "center";
+            ctx.fillStyle = 'black';  // Ensure text color is black
+            ctx.font = "14px Arial";  // Be sure the font size is readable
+            ctx.fillText(`${label}: ${value.toFixed(2)}`, 0, radius - 20);
+            ctx.restore();
+        }
+
+        function updateGauges() {
+            drawGauge(linearGaugeCtx, linear_x, -1, 1.0, '线速度 (m/s)');
+            drawGauge(angularGaugeCtx, angular_z * 180 / Math.PI, -180, 180, '角速度 (°/s)');
+        }
+
+        function sendCMDVel() {
+            if (isConnected) {
+                ws.send(JSON.stringify({ cmd_vel_data: { linear_x, angular_z } }));
+            }
+        }
+
+        function moveForward() {
+            linear_x = Math.min(linear_x + 0.1, 1.0);
+            sendCMDVel();
+            updateGauges();
+        }
+
+        function moveBackward() {
+            linear_x = Math.max(linear_x - 0.1, -1.0);
+            sendCMDVel();
+            updateGauges();
+        }
+
+        function turnLeft() {
+            angular_z = Math.max(angular_z + 0.1, -Math.PI);
+            sendCMDVel();
+            updateGauges();
+        }
+
+        function turnRight() {
+            angular_z = Math.min(angular_z - 0.1, Math.PI);
+            sendCMDVel();
+            updateGauges();
+        }
+
+        function stop() {
+            linear_x = 0;
+            angular_z = 0;
+            sendCMDVel();
+            updateGauges();
+        }
+
+        function startAutoSend() {
+            sendHSVData(); // 立即发送一次
+            setInterval(sendHSVData, 500); // 每500ms发送一次
+        }
+
+        function sendHSVData() {
+            const hsvData = {
+                iLowH: parseInt(document.getElementById('iLowHInput').value, 10),
+                iHighH: parseInt(document.getElementById('iHighHInput').value, 10),
+                iLowS: parseInt(document.getElementById('iLowSInput').value, 10),
+                iHighS: parseInt(document.getElementById('iHighSInput').value, 10),
+                iLowV: parseInt(document.getElementById('iLowVInput').value, 10),
+                iHighV: parseInt(document.getElementById('iHighVInput').value, 10)
+            };
+
+            document.getElementById('logOutput').innerText = `Sent HSV Data: ${JSON.stringify(hsvData)}`;
+            if (isConnected) {
+                ws.send(JSON.stringify(hsvData));
+            }
+        }
+
+        const updateDisplayValues = () => {
+            document.getElementById('iLowHValue').textContent = document.getElementById('iLowHInput').value;
+            document.getElementById('iHighHValue').textContent = document.getElementById('iHighHInput').value;
+            document.getElementById('iLowSValue').textContent = document.getElementById('iLowSInput').value;
+            document.getElementById('iHighSValue').textContent = document.getElementById('iHighSInput').value;
+            document.getElementById('iLowVValue').textContent = document.getElementById('iLowVInput').value;
+            document.getElementById('iHighVValue').textContent = document.getElementById('iHighVInput').value;
+        };
+
+        // 初始化 WebSocket 连接
+        connectWebSocket();
+    </script>
+</body>
+</html>

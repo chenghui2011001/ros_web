@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Image Viewer</title>
+</head>
+<body>
+ 
+<img id="imageDisplay" alt="Received Image" width="640" height="480">
+ 
+<script>
+const imageDisplay = document.getElementById('imageDisplay');
+const ws = new WebSocket('ws://127.0.0.1:9030');
+ 
+ws.binaryType = 'arraybuffer';
+ 
+ws.onopen = function(event) {
+    console.log('WebSocket connection opened:', event);
+};
+ 
+ws.onmessage = function(event) {
+    if (event.data instanceof ArrayBuffer) {
+        // 创建一个 Uint8Array 以便处理二进制数据
+        const binaryData = new Uint8Array(event.data);
+ 
+        // 将二进制数据转换为 Blob 对象
+        const blob = new Blob([binaryData], { type: 'image/jpeg' });
+ 
+        // 创建一个 Data URL 用于在 <img> 标签中显示
+        const imageUrl = URL.createObjectURL(blob);
+ 
+        // 设置 <img> 标签的 src 属性
+        imageDisplay.src = imageUrl;
+    } else {
+        console.error('Received unexpected data type:', typeof event.data);
+    }
+};
+ 
+ws.onclose = function(event) {
+    console.log('WebSocket connection closed:', event);
+};
+</script>
+ 
+</body>
+</html>

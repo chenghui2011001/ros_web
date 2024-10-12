@@ -1,0 +1,2 @@
+haley_service
+-DCMAKE_BUILD_TYPE=RelWithDebInfo -DCATKIN_DEVEL_PREFIX=/home/info/ros_web/devel -DCMAKE_INSTALL_PREFIX=/home/info/ros_web/install -G Unix Makefiles
